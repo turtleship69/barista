@@ -1,4 +1,4 @@
-barista\__pycache__
+barista/__pycache__
 content
-!content\database.sql
+!content/database.sql
 .vscode
