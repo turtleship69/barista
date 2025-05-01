@@ -4,7 +4,7 @@ import jwt
 
 from .models import User, getUserById, getUserBySessionId
 from .tools import gravatar, utc_now
-from .config import jwks_url
+from .config import AUDIENCE, jwks_url, public_keys
 
 import functools
 import sqlite3
@@ -88,14 +88,23 @@ async def hello():
 async def login():
 
     # validate jwt
-    cookie = request.cookies.get("hanko")
-    signing_key = jwks_client.get_signing_key_from_jwt(cookie)
-    data = jwt.decode(
-        cookie,
-        signing_key.key,
-        algorithms=["RS256"],
-        audience="localhost",
-    )
+    jwt_cookie = request.cookies.get("hanko")
+    # print(jwt_cookie)
+    if not jwt_cookie:  # check that the cookie exists
+        return redirect("/")
+    try:
+        kid = jwt.get_unverified_header(jwt_cookie)["kid"]
+        data = jwt.decode(
+            str(jwt_cookie),
+            public_keys[kid],
+            algorithms=["RS256"],
+            audience=AUDIENCE,
+        )
+        #print(data)
+    except Exception as e:
+        # The JWT is invalid
+        print(e)
+        return jsonify({"message": "unknown account"})
 
     # generate session
     session_id = str(uuid.uuid4())
