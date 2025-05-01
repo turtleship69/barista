@@ -3,9 +3,10 @@ import socketio
 import aiosqlite
 
 from .tools import utc_now
+from .config import app_url
 
 # create a Socket.IO server
-sio = socketio.AsyncServer(async_mode="asgi")
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=app_url)
 
 global connected_users
 connected_users = {}

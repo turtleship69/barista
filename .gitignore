@@ -2,3 +2,4 @@ barista/__pycache__
 content
 !content/database.sql
 .vscode
+barista/config.py
