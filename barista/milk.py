@@ -4,7 +4,7 @@ import jwt
 
 from .models import User, getUserById, getUserBySessionId
 from .tools import gravatar, utc_now
-from .config import AUDIENCE, jwks_url, public_keys
+from .config import AUDIENCE, public_keys
 
 import functools
 import sqlite3
@@ -20,8 +20,6 @@ if debug:
     app.secret_key = "secret"
 else:
     app.secret_key = os.urandom(24).hex()
-
-jwks_client = PyJWKClient(jwks_url)
 
 
 @app.before_request
