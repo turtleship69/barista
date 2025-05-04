@@ -12,6 +12,10 @@ global connected_users
 connected_users = {}
 
 
+def reverse_dict(d):
+    return {v: k for k, v in d.items()}
+
+
 @sio.event
 async def connect(sid, environ, auth):
     print(auth)
@@ -51,8 +55,10 @@ async def message(sid, data):
     # todo: verify all data is present
 
     await sio.emit(
-        "incoming_message", {"message": message, "sender": user}, 
-        room=chat_id, skip_sid=sid
+        "incoming_message",
+        {"message": message, "sender": user},
+        room=chat_id,
+        skip_sid=sid,
     )
 
     async with aiosqlite.connect("content/database.db") as db:
@@ -72,3 +78,22 @@ async def connect_to_chat(sid, data):
     print("connect_to_chat ", sid, data)
     await sio.enter_room(sid, data)
     await sio.send(f"Joined room {data}", to=sid)
+
+
+async def inform_new_chat(user_id, chat_info):
+    print("inform_new_chat ", user_id, chat_info)
+
+    sid = reverse_dict(connected_users).get(user_id)
+    if not sid:
+        print("User not connected")
+        return
+    # send a message to the user that they have been added to a new chat
+    await sio.emit(
+        "inform_new_chat",
+        {
+            "name": chat_info["name"],
+            "chatId": chat_info["chat_id"],
+            "pfp": chat_info["pfp"],
+        },
+        to=sid,
+    )

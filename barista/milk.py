@@ -2,8 +2,9 @@ from quart import Quart, redirect, request, g, session, jsonify
 from jwt import PyJWKClient
 import jwt
 
+from .beans import inform_new_chat
 from .models import User, getUserById, getUserBySessionId
-from .tools import gravatar, utc_now
+from .tools import gravatar, utc_now, handle_new_chat_request
 from .config import AUDIENCE, public_keys
 
 import functools
@@ -75,6 +76,38 @@ def login_required(view):
 
     return wrapped_view
 
+def async_login_required(view):
+    @functools.wraps(view)
+    async def wrapped_view(**kwargs):
+        # get session from db
+        g.test = 345
+        if "session_id" in session:
+            g.user = getUserBySessionId(session["session_id"], g.db)
+            if not g.user:
+                response = {
+                    "status": "error",
+                    "error": "unauthenticated",
+                    "message": "Invalid session",
+                }
+                return response, 401
+        else:
+            return {
+                "status": "error",
+                "error": "unauthenticated",
+                "message": "Not logged in",
+            }, 401
+
+        if g.user.user_id == g.user.username:
+            response = {
+                "status": "error",
+                "error": "notOnboarded",
+                "redirect_url": "/onboarding",
+                "message": "User needs to finish signing up at /onboarding",
+            }
+            return response, 401
+        return await view(**kwargs)
+
+    return wrapped_view
 
 @app.route("/")
 async def hello():
@@ -210,41 +243,52 @@ def chatlist():
     """
     chats = g.db.execute(
     """
-    SELECT 
-        c.chat_id, 
-            CASE 
+SELECT 
+    c.chat_id, 
+    CASE 
         WHEN c.chat_name IS NOT NULL THEN c.chat_name
         ELSE (
-            SELECT GROUP_CONCAT(u.username, ', ')
-            FROM members m
-            JOIN users u ON m.user_id = u.user_id
-            WHERE m.chat_id = c.chat_id
-              AND m.user_id != cm.user_id
+            SELECT GROUP_CONCAT(u2.username, ', ')
+            FROM members m2
+            JOIN users u2 ON m2.user_id = u2.user_id
+            WHERE m2.chat_id = c.chat_id
+              AND m2.user_id != cm.user_id
         )
     END AS chat_name, 
-        COALESCE(c.chat_photo, u.pfp) AS chat_photo, 
-        m.message, 
-        m.time, 
-        u.username AS last_sender
-    FROM 
-        chats c
-    JOIN 
-        members cm ON c.chat_id = cm.chat_id
-    LEFT JOIN 
-        messages m ON c.chat_id = m.chat_id
-    LEFT JOIN 
-        users u ON m.author = u.user_id
-    WHERE 
-        cm.user_id = ?
-        AND m.time = (
-            SELECT MAX(time)
-            FROM messages
-            WHERE chat_id = c.chat_id
-        )
-    ORDER BY 
-        m.time DESC;
+    COALESCE(c.chat_photo, u_other.pfp) AS chat_photo, 
+    m.message, 
+    m.time, 
+    CASE 
+        WHEN m.author = cm.user_id THEN NULL
+        ELSE u.username
+    END AS last_sender
+FROM 
+    chats c
+JOIN 
+    members cm ON c.chat_id = cm.chat_id
+LEFT JOIN (
+    SELECT m1.*
+    FROM messages m1
+    INNER JOIN (
+        SELECT chat_id, MAX(time) AS max_time
+        FROM messages
+        GROUP BY chat_id
+    ) latest ON m1.chat_id = latest.chat_id AND m1.time = latest.max_time
+) m ON c.chat_id = m.chat_id
+LEFT JOIN 
+    users u ON m.author = u.user_id
+LEFT JOIN (
+    SELECT m3.chat_id, u3.pfp
+    FROM members m3
+    JOIN users u3 ON m3.user_id = u3.user_id
+    WHERE m3.user_id != ?
+) u_other ON u_other.chat_id = c.chat_id
+WHERE 
+    cm.user_id = ?
+ORDER BY 
+    m.time DESC;
         """,
-        (g.user.user_id,),
+        (g.user.user_id,g.user.user_id,),
     ).fetchall()
 
     chatlist = []
@@ -332,6 +376,41 @@ def chat(chat_id):
 
     return jsonify(messages), 200
 
+@app.route("/new_chat", methods=["POST"])
+@async_login_required
+async def new_chat():
+    # get all messages in a chat
+    requested_user_username = (await request.form).get("username")
+    print(requested_user_username)
+    if not requested_user_username:
+        return {
+            "status": "error",
+            "error": "invalidUsername",
+            "message": "Invalid username",
+        }, 400
+
+    new_chat = await handle_new_chat_request(
+        g.user.user_id, requested_user_username, g.db
+    )
+
+    response = {
+        "status": new_chat["status"],
+        "message": new_chat["message"],
+        "pfp": new_chat["pfp"],
+        "chatId": new_chat["chat_id"],
+    }
+    print(new_chat)
+
+    await inform_new_chat(
+        new_chat["requested_id"],
+        {
+            "chat_id": new_chat["chat_id"],
+            "pfp": g.user.pfp,
+            "name": g.user.username,
+        },
+    )
+
+    return response, new_chat["status_code"]
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=64390)
